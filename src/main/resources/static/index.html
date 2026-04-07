@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenID Federation Viewer</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    :root {
+      --bg: #f4f8fb;
+      --card: #ffffff;
+      --ink: #13202b;
+      --muted: #4d6070;
+      --brand: #0a7f6f;
+      --line: #d8e2ea;
+      --error: #b23838;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 15%, #d8f4ef 0%, transparent 38%),
+        radial-gradient(circle at 85% 0%, #dbeeff 0%, transparent 32%),
+        var(--bg);
+      min-height: 100vh;
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1rem 3rem;
+    }
+
+    .hero {
+      margin-bottom: 1rem;
+    }
+
+    .hero h1 {
+      margin: 0 0 0.5rem;
+      font-size: 1.8rem;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin: 1rem 0 1.4rem;
+    }
+
+    button {
+      border: 0;
+      border-radius: 0.65rem;
+      background: var(--brand);
+      color: white;
+      padding: 0.65rem 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #2d5f97;
+    }
+
+    .status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .status strong {
+      color: var(--ink);
+      margin-left: 0.35rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+
+    @media (min-width: 960px) {
+      .grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .span-2 {
+        grid-column: 1 / -1;
+      }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 0.9rem;
+      padding: 1rem;
+      box-shadow: 0 2px 8px rgba(12, 35, 50, 0.04);
+    }
+
+    .card h2 {
+      margin: 0 0 0.7rem;
+      font-size: 1.05rem;
+    }
+
+    pre {
+      margin: 0;
+      background: #0f1c26;
+      color: #d7ebf8;
+      border-radius: 0.65rem;
+      padding: 0.85rem;
+      overflow: auto;
+      font-size: 0.84rem;
+      line-height: 1.45;
+      max-height: 350px;
+    }
+
+    .raw {
+      max-height: 200px;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+
+    .error {
+      margin-top: 0.75rem;
+      color: var(--error);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="page">
+    <div class="hero">
+      <h1>OpenID Federation Entity Statement Viewer</h1>
+      <p>Fetches /.well-known/openid-federation and decodes JWT header + payload for quick inspection.</p>
+    </div>
+
+    <div class="toolbar">
+      <button @click="fetchStatement" :disabled="loading">
+        {{ loading ? 'Loading...' : 'Fetch Entity Statement' }}
+      </button>
+      <button class="secondary" @click="clearAll" :disabled="loading">Clear</button>
+      <div class="status">
+        Last fetch:
+        <strong>{{ lastFetch || 'not fetched yet' }}</strong>
+      </div>
+    </div>
+
+    <div v-if="error" class="error">{{ error }}</div>
+
+    <div class="grid" v-if="token">
+      <div class="card">
+        <h2>JWT Header</h2>
+        <pre>{{ pretty(header) }}</pre>
+      </div>
+
+      <div class="card">
+        <h2>JWT Payload</h2>
+        <pre>{{ pretty(payload) }}</pre>
+      </div>
+
+      <div class="card span-2">
+        <h2>Raw JWT</h2>
+        <pre class="raw">{{ token }}</pre>
+      </div>
+
+      <div class="card">
+        <h2>Quick Checks</h2>
+        <pre>{{ pretty(checks) }}</pre>
+      </div>
+
+      <div class="card">
+        <h2>Endpoint</h2>
+        <pre>{{ endpoint }}</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp } = Vue;
+
+    function b64urlToJson(input) {
+      const padded = input.replace(/-/g, '+').replace(/_/g, '/');
+      const withPad = padded + '='.repeat((4 - (padded.length % 4)) % 4);
+      return JSON.parse(atob(withPad));
+    }
+
+    createApp({
+      data() {
+        return {
+          endpoint: '/.well-known/openid-federation',
+          loading: false,
+          error: '',
+          token: '',
+          header: null,
+          payload: null,
+          lastFetch: ''
+        };
+      },
+      computed: {
+        checks() {
+          if (!this.payload || !this.header) {
+            return {};
+          }
+          return {
+            token_parts: this.token.split('.').length,
+            typ: this.header.typ || null,
+            alg: this.header.alg || null,
+            has_iss: !!this.payload.iss,
+            has_sub: !!this.payload.sub,
+            has_jwks: !!this.payload.jwks,
+            has_metadata: !!this.payload.metadata,
+            has_openid_relying_party: !!(this.payload.metadata && this.payload.metadata.openid_relying_party)
+          };
+        }
+      },
+      methods: {
+        pretty(obj) {
+          return JSON.stringify(obj, null, 2);
+        },
+        clearAll() {
+          this.error = '';
+          this.token = '';
+          this.header = null;
+          this.payload = null;
+        },
+        async fetchStatement() {
+          this.loading = true;
+          this.error = '';
+          try {
+            const response = await fetch(this.endpoint, {
+              headers: { Accept: 'application/entity-statement+jwt' }
+            });
+
+            if (!response.ok) {
+              throw new Error('HTTP ' + response.status + ' when calling endpoint');
+            }
+
+            const text = (await response.text()).trim();
+            const parts = text.split('.');
+            if (parts.length !== 3) {
+              throw new Error('Response is not a compact JWT with 3 parts');
+            }
+
+            this.token = text;
+            this.header = b64urlToJson(parts[0]);
+            this.payload = b64urlToJson(parts[1]);
+            this.lastFetch = new Date().toLocaleString();
+          } catch (e) {
+            this.error = e.message || String(e);
+          } finally {
+            this.loading = false;
+          }
+        }
+      },
+      mounted() {
+        this.fetchStatement();
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
