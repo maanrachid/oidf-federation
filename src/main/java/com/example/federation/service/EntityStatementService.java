@@ -22,7 +22,6 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Service responsible for building and signing the OpenID Federation entity statement.
@@ -60,7 +59,10 @@ public class EntityStatementService {
         JWK jwk = signingCredential.transform(new JwkTransformerFunction());
         RSAKey rsaKey = (RSAKey) jwk;
 
-        String keyId = rsaKey.getKeyID() != null ? rsaKey.getKeyID() : UUID.randomUUID().toString();
+        String keyId = rsaKey.getKeyID();
+        if (keyId == null || keyId.isBlank()) {
+            throw new IllegalStateException("Signing key must have a stable key ID");
+        }
         log.debug("Using key ID '{}' for entity statement signing", keyId);
 
         // Public JWKS published in the entity statement
